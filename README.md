@@ -1,35 +1,75 @@
-# DVA_proj
-reddit-bot-detection
+# Reddit Bot Detection Using Graph-Based Anomaly Detection
 
-I cleaned the code and organized it so each part can be used. I implemented DGI so that features can be embedded with the graph structure. 
-See the 'Implementation' notebook
+This project explores unsupervised machine learning methods for identifying potentially automated Reddit accounts based on user behavior and interaction patterns.
 
-How it works:
-1) Load / clean data
-2) Create dataframe with engineered features per user
-3) Create dataframe with edges for users on the same post (limit by a threshold for weight of the edges)
-4) Using the edge and feature dataframes, create graph as a pytorch geometric object
-5) Run DGI with the graph
-6) The output of DGI is an embedding that can be used in anomaly detection
+Using Reddit comment data from May 2015, we constructed a user interaction network, engineered behavioral features, and applied Isolation Forest and Deep Graph Infomax (DGI) to identify anomalous accounts.
 
+The project also includes an interactive D3.js visualization for exploring relationships between potentially anomalous users.
 
-"Joe_notebook" file:
+## Methodology
 
-I engineered some features, created a graph network, and combined them into DOMINANT https://arxiv.org/abs/2406.04690v1 
-This is similar to DGI, which takes a graph as well as features, and makes an embedding, which can then be fed into anomaly detection. DOMINANT takes the graph and features and goes right into outputting anomaly detection scores.
+### 1. Data Processing and Graph Construction
 
-I was having some trouble getting the imports for pytorch working. I included a yaml, though you might need to change the pytorch version based on your GPU. Also in the yaml I put two lines that have to be run on their own in pip.
+Reddit comments were processed to construct a weighted user interaction graph. Users were connected when they commented on the same posts, with edge weights representing the frequency of shared interactions.
 
-Features: 
-User features
-Number of posts
-Average length of posts
-Average upvotes, downvotes, scores
-Temporal features
-Average time in between posts
-Fraction of the hours of the day that the user makes posts
-Diversity of posting times (entropy)
-Text features
-Word diversity (amount of different words used)
-Average length of posts
-Semantic similarity with language model
+### 2. Feature Engineering
+
+Features were extracted across four categories:
+
+- **Graph:** Degree, weighted degree, clustering coefficient, PageRank, and betweenness centrality.
+- **Temporal:** Posting patterns, activity across hours and days, and time between comments.
+- **Content:** Comment length, text similarity, URL frequency, and capitalization patterns.
+- **Metadata:** Comment scores, username patterns, and account activity statistics.
+
+### 3. Anomaly Detection
+
+Two approaches were evaluated:
+
+- **Isolation Forest:** Applied directly to engineered user features to identify unusual behavioral patterns.
+- **Deep Graph Infomax (DGI):** Used a graph convolutional network to learn user embeddings from the interaction graph. Isolation Forest was subsequently applied to the learned embeddings.
+
+We compared anomaly rankings based on engineered features, DGI embeddings, and combined scores. We also investigated how transformations of skewed features affected the results.
+
+### 4. Visualization
+
+An interactive network visualization was developed using D3.js to explore anomalous users and their relationships across subreddits.
+
+## Results
+
+Isolation Forest applied to the original engineered features produced the most interpretable anomaly rankings during qualitative inspection. Highly ranked accounts frequently exhibited unusual activity or interaction patterns.
+
+DGI embeddings identified different types of structural anomalies, providing an alternative representation of user behavior.
+
+Because reliable ground-truth bot labels were unavailable, the model outputs represent anomaly scores rather than confirmed bot classifications. Results were evaluated primarily through exploratory analysis and manual inspection.
+
+## Repository Structure
+
+- `src/` — Python modules for data loading, feature engineering, graph construction, DGI, Isolation Forest, and visualization export.
+- `notebooks/pipeline_example.ipynb` — Main analysis notebook, including feature exploration, preprocessing experiments, model training, and anomaly comparisons.
+- `results/` — Saved feature, edge, and graph data generated during the project.
+- `visualization/` — D3.js visualization and its corresponding JSON dataset.
+
+## Reproducibility
+
+This repository contains a curated version of the original academic project, intended to demonstrate the methodology, analysis, and implementation.
+
+The original Reddit comment dataset is not included due to its size. However, processed edge, feature, and graph data are included, along with the notebook's saved outputs.
+
+The complete pipeline has not been validated for end-to-end execution in its current form. Running the original data processing steps requires the missing Reddit dataset and a compatible Python environment.
+
+The notebook is intended primarily as a reference for the analysis and modeling workflow.
+
+## Technologies
+
+Python, pandas, NumPy, NetworkX, PyTorch, PyTorch Geometric, scikit-learn, DuckDB, Matplotlib, Seaborn, and D3.js.
+
+## Project Resources
+
+### Analysis Notebook
+- [pipeline_example.ipynb](notebooks/pipeline_example.ipynb)
+
+### Project Materials
+- [Portfolio Project Page](https://joe-ferrin.github.io/projects/reddit-bot-detection.html)
+- [Interactive Network Visualization](https://joe-ferrin.github.io/assets/visualization/network.html)
+- [Project Poster](https://joe-ferrin.github.io/assets/images/reddit-bot-detection_poster.svg)
+- [Final Report](https://joe-ferrin.github.io/assets/reports/reddit-bot-detection_report.pdf)

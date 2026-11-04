@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Reddit Bot Dashboard</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+
+
+  <style>
+    body { font-family: sans-serif; margin: 18px; }
+    h1 { margin-bottom: 8px; }
+    .controls { display: flex; gap: 20px; align-items: center; margin-bottom: 12px; }
+    label { font-weight: bold; margin-right: 6px; }
+    select { padding: 4px 6px; }
+
+    svg { border: 1px solid black; background: white; display:block; }
+
+    .group-title { font-size: 14px; font-weight: bold; text-anchor: middle; }
+
+    .link { stroke: grey; stroke-width: 1.2; }
+    .nodeA { stroke: black; stroke-width: 0.6; }
+    .nodeB { stroke: black; stroke-width: 0.6; }
+    .cross { stroke: red; stroke-width: 2; opacity: 0.7; }
+
+    text.nodelabel { font-size: 10px; text-anchor: middle; pointer-events: none; }
+
+    /* Tooltip */
+    .tooltip {
+      position: absolute;
+      pointer-events: none;
+      background: white;
+      border: 1px solid black;
+      padding: 8px;
+      font-size: 12px;
+      display: none;
+      z-index: 1000;
+      max-width: 320px;
+    }
+
+    /* Hover */
+    circle.node:hover {
+      stroke-width: 2.4;
+    }
+  </style>
+</head>
+<body>
+  <h1>Reddit Bot Dashboard</h1>
+
+  <div class="controls">
+    <div>
+      <label for="subredditA">Subreddit A:</label>
+      <select id="subredditA"></select>
+    </div>
+
+    <div>
+      <label for="subredditB">Subreddit B:</label>
+      <select id="subredditB"></select>
+    </div>
+
+    <div style="margin-left:20px;color:#555;">
+      <small>Choose two subreddits to view user crossover</small>
+    </div>
+  </div>
+
+  <svg id="bigSvg" width="1100" height="700"></svg>
+
+  <div id="tooltip" class="tooltip"></div>
+
+<script>
+
+/*
+Script Code
+*/
+
+d3.json("graph.json").then(data => {
+  const svg = d3.select("#bigSvg");
+  const tooltip = d3.select("#tooltip");
+
+  const W = +svg.attr("width");
+  const H = +svg.attr("height");
+
+  const margin = {top: 60, right: 20, bottom: 20, left: 20};
+  const regionWidth = Math.floor((W - margin.left - margin.right) / 2);
+  const regionHeight = H - margin.top - margin.bottom;
+  const gapBetween = 20;
+
+  const groupAX = margin.left;
+  const groupAY = margin.top;
+  const groupBX = margin.left + regionWidth + gapBetween;
+  const groupBY = margin.top;
+
+  // groups
+  const gA = svg.append("g").attr("transform", `translate(${groupAX},${groupAY})`);
+  const gB = svg.append("g").attr("transform", `translate(${groupBX},${groupBY})`);
+
+  gA.append("text").attr("class","group-title").attr("x", regionWidth/2).attr("y", -28).text("Subreddit A");
+  gB.append("text").attr("class","group-title").attr("x", regionWidth/2).attr("y", -28).text("Subreddit B");
+
+  gA.append("g").attr("class","linksA");
+  gA.append("g").attr("class","nodesA");
+  gA.append("g").attr("class","labelsA");
+
+  gB.append("g").attr("class","linksB");
+  gB.append("g").attr("class","nodesB");
+  gB.append("g").attr("class","labelsB");
+
+  const crossLayer = svg.append("g").attr("class","crossLayer");
+
+  // dropdowns
+  const dropdownA = d3.select("#subredditA");
+  const dropdownB = d3.select("#subredditB");
+
+  const subs = (data.subreddits || []).slice().sort();
+  dropdownA.selectAll("option").data(subs).join("option").attr("value", d=>d).text(d=>d);
+  dropdownB.selectAll("option").data(subs).join("option").attr("value", d=>d).text(d=>d);
+
+  // get min/max anomally for coloring
+  const [minScore, maxScore] = d3.extent(data.nodes, d => d.anomaly_score);
+
+  // dcolor scale
+  const colorScale = d3.scaleLinear()
+    .domain([minScore, maxScore])
+    .range(["lightblue", "darkred"]);
+
+  // filter nodes and edges for a subreddit and copy
+  function filterFor(sub) {
+    if (!sub) return {nodes: [], edges: []};
+    const nodes = data.nodes.filter(n => Array.isArray(n.subreddits) && n.subreddits.includes(sub))
+                             .map(n => Object.assign({}, n)); // shallow clone
+    const ids = new Set(nodes.map(n=>n.id));
+    const edges = (data.edges || []).filter(e =>
+      Array.isArray(e.subreddits) && e.subreddits.includes(sub) && ids.has(e.source) && ids.has(e.target)
+    ).map(e => Object.assign({}, e));
+    // replace edge endpoints with node objects (later simulations expect object refs)
+    const nodeMap = new Map(nodes.map(n => [n.id, n]));
+    edges.forEach(e => {
+      e.source = nodeMap.get(e.source);
+      e.target = nodeMap.get(e.target);
+    });
+    return {nodes, edges};
+  }
+
+  // simulations for each subreddit
+    const simA = d3.forceSimulation()
+        .force("link", d3.forceLink().id(d => d.id).distance(90))
+        .force("charge", d3.forceManyBody().strength(-200))
+        .force("center", d3.forceCenter(regionWidth/2, regionHeight/2))
+        .force("collide", d3.forceCollide(18))
+        .force("x", d3.forceX(regionWidth/2).strength(0.2))
+        .force("y", d3.forceY(regionHeight/2).strength(0.2));
+
+    const simB = d3.forceSimulation()
+        .force("link", d3.forceLink().id(d => d.id).distance(90))
+        .force("charge", d3.forceManyBody().strength(-200))
+        .force("center", d3.forceCenter(regionWidth/2, regionHeight/2))
+        .force("collide", d3.forceCollide(18))
+        .force("x", d3.forceX(regionWidth/2).strength(0.2))
+        .force("y", d3.forceY(regionHeight/2).strength(0.2));
+
+
+    //dragging
+  function makeDrag(sim) {
+    function started(event, d) {
+      if (!event.active) sim.alphaTarget(0.3).restart();
+      d.fx = d.x; d.fy = d.y;
+    }
+    function dragged(event, d) {
+      d.fx = event.x; d.fy = event.y;
+    }
+    function ended(event, d) {
+      if (!event.active) sim.alphaTarget(0);
+      d.fx = null; d.fy = null;
+    }
+    return d3.drag().on("start", started).on("drag", dragged).on("end", ended);
+  }
+
+  // draw/update graph inside group
+  function drawGraph(filtered, containerG, sim, classSuffix) {
+    // LINKS
+    containerG.select(".links" + classSuffix)
+      .selectAll("line")
+      .data(filtered.edges, d => d.source.id + "->" + d.target.id)
+      .join(
+        enter => enter.append("line").attr("class","link").style("stroke","#999"),
+        update => update,
+        exit => exit.remove()
+      );
+
+    // NODES
+    containerG.select(".nodes" + classSuffix)
+      .selectAll("circle")
+      .data(filtered.nodes, d => d.id)
+      .join(
+        enter => enter.append("circle")
+                      .attr("r", 10)
+                      .attr("class", "node")
+                      .classed("nodeA", classSuffix==="A")
+                      .classed("nodeB", classSuffix==="B")
+                      .call(makeDrag(sim)),
+        update => update,
+        exit => exit.remove()
+      )
+      // set color based on anomaly_score; default to light if missing
+      .attr("fill", d => {
+         const s = (typeof d.anomaly_score === "number") ? d.anomaly_score : 0;
+         return colorScale(Math.max(0, Math.min(1, s)));
+      });
+
+    // labels
+    containerG.select(".labels" + classSuffix)
+      .selectAll("text")
+      .data(filtered.nodes, d => d.id)
+      .join(
+        enter => enter.append("text").attr("class","nodelabel").text(d => d.id).attr("dy", -14),
+        update => update.text(d => d.id),
+        exit => exit.remove()
+      );
+
+    // assign to simulation
+    sim.nodes(filtered.nodes);
+    sim.force("link").links(filtered.edges);
+    sim.alpha(1).restart();
+
+    return {
+      nodeSel: containerG.selectAll(".nodes" + classSuffix + " circle"),
+      linkSel: containerG.selectAll(".links" + classSuffix + " line"),
+      labelSel: containerG.selectAll(".labels" + classSuffix + " text")
+    };
+  }
+
+  // update positions from ticks and redraw cross-links
+  simA.on("tick", () => {
+    gA.selectAll(".linksA line")
+      .attr("x1", d => d.source.x).attr("y1", d => d.source.y)
+      .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
+
+    gA.selectAll(".nodesA circle")
+      .attr("cx", d => d.x).attr("cy", d => d.y);
+
+    gA.selectAll(".labelsA text")
+      .attr("x", d => d.x).attr("y", d => d.y - 12);
+
+    updateCrossLinks();
+  });
+
+  simB.on("tick", () => {
+    gB.selectAll(".linksB line")
+      .attr("x1", d => d.source.x).attr("y1", d => d.source.y)
+      .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
+
+    gB.selectAll(".nodesB circle")
+      .attr("cx", d => d.x).attr("cy", d => d.y);
+
+    gB.selectAll(".labelsB text")
+      .attr("x", d => d.x).attr("y", d => d.y - 12);
+
+    updateCrossLinks();
+  });
+
+  // cross-links between identical users in A & B
+  function updateCrossLinks() {
+    // maps of id->node (local coords)
+    const mapA = new Map();
+    gA.selectAll(".nodesA circle").data().forEach(d => { if (d) mapA.set(d.id, d); });
+    const mapB = new Map();
+    gB.selectAll(".nodesB circle").data().forEach(d => { if (d) mapB.set(d.id, d); });
+
+    const shared = [];
+    mapB.forEach((nodeB, id) => { if (mapA.has(id)) shared.push({id, a: mapA.get(id), b: nodeB}); });
+
+    const lines = crossLayer.selectAll("line.cross").data(shared, d => d.id);
+
+    lines.join(
+      enter => enter.append("line").attr("class","cross").attr("stroke","red"),
+      update => update,
+      exit => exit.remove()
+    )
+    .attr("x1", d => (groupAX + d.a.x))
+    .attr("y1", d => (groupAY + d.a.y))
+    .attr("x2", d => (groupBX + d.b.x))
+    .attr("y2", d => (groupBY + d.b.y));
+  }
+
+  // render both graphs
+  function render() {
+    const subA = dropdownA.property("value");
+    const subB = dropdownB.property("value");
+
+    const fA = filterFor(subA);
+    const fB = filterFor(subB);
+
+    // draw
+    drawGraph(fA, gA, simA, "A");
+    drawGraph(fB, gB, simB, "B");
+
+    // add hover tooltip behavior to nodes
+
+    gA.selectAll(".nodesA circle").on(".hover", null);
+    gB.selectAll(".nodesB circle").on(".hover", null);
+
+    // Mouse enters a node
+    function onMouseEnter(event, d) {
+      // Format anomaly score
+      let anomaly = "N/A";
+      if (typeof d.anomaly_score === "number") {
+        anomaly = d.anomaly_score.toFixed(3);
+      }
+
+      // Build feature list
+      let featureList = "";
+      if (d.features && Object.keys(d.features).length > 0) {
+        for (const [key, value] of Object.entries(d.features)) {
+          const formatted =
+            typeof value === "number" ? value.toFixed(3) : value;
+          featureList += `<div><strong>${key}:</strong> ${formatted}</div>`;
+        }
+      } else {
+        featureList = "<div>(no features)</div>";
+      }
+
+      const html = `
+        <div><strong>${d.id}</strong></div>
+        <div><strong>Anomaly:</strong> ${anomaly}</div>
+        <div style="margin-top: 6px;"><strong>Features</strong></div>
+        ${featureList}
+      `;
+
+      tooltip.html(html).style("display", "block");
+
+      d3.select(this)
+        .raise()
+        .attr("stroke-width", 2);
+    }
+
+
+    // While hovering
+    function onMouseMove(event) {
+
+      const mouseX = event.pageX;
+      const mouseY = event.pageY;
+
+      const tooltipNode = tooltip.node();
+      const tooltipWidth  = tooltipNode.offsetWidth;
+      const tooltipHeight = tooltipNode.offsetHeight;
+
+      const padding = 12;
+
+      let left = mouseX + padding;
+      let top  = mouseY + padding;
+
+      // Keep tooltip inside the viewport horizontally
+      const viewportRight = window.scrollX + window.innerWidth;
+      if (left + tooltipWidth > viewportRight) {
+        left = mouseX - tooltipWidth - padding;
+      }
+
+      // Keep tooltip inside the viewport vertically
+      const viewportBottom = window.scrollY + window.innerHeight;
+      if (top + tooltipHeight > viewportBottom) {
+        top = mouseY - tooltipHeight - padding;
+      }
+
+      tooltip
+        .style("left", `${left}px`)
+        .style("top", `${top}px`);
+    }
+
+
+    // When leaving node
+    function onMouseLeave(event, d) {
+      tooltip.style("display","none");
+      d3.select(this).attr("stroke-width", 0.6);
+    }
+
+    gA.selectAll(".nodesA circle")
+      .on("mouseenter.hover", onMouseEnter)
+      .on("mousemove.hover", onMouseMove)
+      .on("mouseleave.hover", onMouseLeave);
+
+    gB.selectAll(".nodesB circle")
+      .on("mouseenter.hover", onMouseEnter)
+      .on("mousemove.hover", onMouseMove)
+      .on("mouseleave.hover", onMouseLeave);
+
+    // draw cross-links
+    updateCrossLinks();
+  }
+
+  // wire dropdowns
+  dropdownA.on("change", render);
+  dropdownB.on("change", render);
+
+  // initialize
+  if (subs.length > 0) dropdownA.property("value", subs[0]);
+  if (subs.length > 1) dropdownB.property("value", subs[1]);
+  else if (subs.length === 1) dropdownB.property("value", subs[0]);
+  render();
+
+}).catch(err => {
+  console.error("Failed to load graph.json:", err);
+  d3.select("body").append("p").style("color","red").text("Error loading graph.json — check console.");
+});
+</script>
+</body>
+</html>

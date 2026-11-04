@@ -1,0 +1,25 @@
+# PyCharm / IDE
+.idea/
+.vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment variables
+.env
+.env.*
+
+# Raw input datasets
+data/
+
+# Temporary files
+*.log
+.DS_Store
+Thumbs.db
